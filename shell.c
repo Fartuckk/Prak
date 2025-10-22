@@ -10,7 +10,7 @@ enum  {
     REGULAR
 }  state;
 
-inline int Is_space(char ch) {
+int Is_space(char ch) {
     if ( ((ch >= 0) && (ch <= 32)) || (ch == 127) ) {
         return 1;
     } else {
