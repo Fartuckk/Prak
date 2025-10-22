@@ -37,7 +37,6 @@ void Parser(char ch) {
             }
         break;
     }
-
 }
 
 /*execute parsered cmds*/
