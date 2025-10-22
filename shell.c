@@ -10,11 +10,19 @@ enum  {
     REGULAR
 }  state;
 
+inline int Is_space(char ch) {
+    if ( ((ch >= 0) && (ch <= 32)) || (ch == 127) ) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
 /*parser by char*/
 void Parser(char ch) {
     switch (state) {
         case SPACE:
-            if ( ((ch >= 0) && (ch <= 32)) || (ch == 127)) {
+            if ( Is_space(ch) ) {
                 /*doing nothing*/
             }
             else if ( (1) ) {
@@ -27,7 +35,7 @@ void Parser(char ch) {
         break;
 
         case REGULAR:
-            if ( ((ch >= 0) && (ch <= 32)) || (ch == 127)) {
+            if ( Is_space(ch) ) {
                 state = SPACE;
             }
             else if ( (1) ) {
