@@ -6,7 +6,7 @@ char** cmds = NULL;
 
 /*parser by char*/
 void Parser(char ch) {
-    printf("parsed symbol %c", ch);
+    printf("parsed symbol %c\n", ch);
 }
 
 /*execute parsered cmds*/
@@ -17,10 +17,10 @@ void Execute() {
 int main() {
     char ch;
 
-    while (1) {
+    while ( 1 ) {
         ch = getchar();
         if (ch == EOF) {
-            printf("Exit");
+            printf("\nExit.\n");
             return 0;
         }
         if (ch == '\n') {
@@ -29,18 +29,4 @@ int main() {
             Parser(ch);
         }
     }
-
-
-
-    ch = getchar();
-    while (ch != EOF) {
-        while ( (ch != '\n') && (ch != EOF) ) {
-            
-            Parser();
-            ch = getchar();
-        }
-        /*command analysis & execution*/
-    }
-
-    return 0;
 }
