@@ -4,13 +4,20 @@
 
 char** cmds = NULL;
 
-void Parcer() {
+void Parser() {
 }
 
 int main() {
     char ch;
+
     ch = getchar();
-    printf("%c", ch);
+    while (ch != EOF) {
+        while ( (ch != '\n') && (ch != EOF) ) {
+            
+
+            ch = getchar();
+        }
+    }
 
     return 0;
 }
