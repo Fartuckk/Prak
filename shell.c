@@ -14,7 +14,7 @@ int main() {
     while (ch != EOF) {
         while ( (ch != '\n') && (ch != EOF) ) {
             
-
+            Parser();
             ch = getchar();
         }
     }
