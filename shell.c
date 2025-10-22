@@ -6,7 +6,7 @@ char** cmds = NULL;
 
 /*parser by char*/
 void Parser(char ch) {
-    printf("parsed symbol %c\n", ch);
+    printf("Parsed symbol: %c.\n", ch);
 }
 
 /*execute parsered cmds*/
