@@ -31,9 +31,9 @@ void Parser(char ch) {
                 state = SPACE;
             }
             else if ( (1) ) {
-                cmds[cmdslen-1] = malloc((strlen(cmdslen-1) + 2)*sizeof(char));
-                cmds[cmdslen-1][strlen(cmdslen-1)] = ch;
-                cmds[cmdslen-1][strlen(cmdslen-1) + 1] = '\0';
+                cmds[cmdslen-1] = malloc((strlen(cmds[cmdslen-1]) + 2)*sizeof(char));
+                cmds[cmdslen-1][strlen(cmds[cmdslen-1])] = ch;
+                cmds[cmdslen-1][strlen(cmds[cmdslen-1]) + 1] = '\0';
             }
         break;
     }
