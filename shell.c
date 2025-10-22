@@ -11,11 +11,7 @@ enum  {
 }  state;
 
 int Is_space(char ch) {
-    if ( ((ch >= 0) && (ch <= 32)) || (ch == 127) ) {
-        return 1;
-    } else {
-        return 0;
-    }
+    return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
 }
 
 /*parser by char*/
