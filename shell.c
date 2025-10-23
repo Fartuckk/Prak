@@ -40,9 +40,23 @@ void ClearCmds() {
     state = SPACE;
 }
 
+void PutNewWord(char ch) {
+    ++cmdslen;
+    cmds = realloc(cmds, cmdslen*sizeof(char *));
+    cmds[cmdslen-1] = malloc(2*sizeof(char));
+    cmds[cmdslen-1][0] = ch;
+    cmds[cmdslen-1][1] = '\0';
+}
+
+void PutCurWord(char ch) {
+    int len = strlen(cmds[cmdslen-1]);
+    cmds[cmdslen-1] = realloc(cmds[cmdslen-1], (len + 2)*sizeof(char));
+    cmds[cmdslen-1][len] = ch;
+    cmds[cmdslen-1][len + 1] = '\0';
+}
+
 /*parser by char*/
 void Parser(char ch) {
-    int len;
     switch (state) {
         case SPACE:
             if ( Is_space(ch) ) {
@@ -50,19 +64,11 @@ void Parser(char ch) {
             }
             else if (Is_special(ch))
             {
-                ++cmdslen;
-                cmds = realloc(cmds, cmdslen * sizeof(char *));
-                cmds[cmdslen - 1] = malloc(2 * sizeof(char));
-                cmds[cmdslen - 1][0] = ch;
-                cmds[cmdslen - 1][1] = '\0';
+                PutNewWord(ch);
                 state = SPACE;
             }
             else if ( (1) ) {
-                ++cmdslen;
-                cmds = realloc(cmds, cmdslen*sizeof(char *));
-                cmds[cmdslen-1] = malloc(2*sizeof(char));
-                cmds[cmdslen-1][0] = ch;
-                cmds[cmdslen-1][1] = '\0';
+                PutNewWord(ch);
                 state = REGULAR;
             }
         break;
@@ -71,18 +77,11 @@ void Parser(char ch) {
                 state = SPACE;
             }
             else if ( Is_special(ch) ) {
-                ++cmdslen;
-                cmds = realloc(cmds, cmdslen*sizeof(char *));
-                cmds[cmdslen-1] = malloc(2*sizeof(char));
-                cmds[cmdslen-1][0] = ch;
-                cmds[cmdslen-1][1] = '\0';
+                PutNewWord(ch);
                 state = SPACE;
             }
             else if ( (1) ) {
-                len = strlen(cmds[cmdslen-1]);
-                cmds[cmdslen-1] = realloc(cmds[cmdslen-1], (len + 2)*sizeof(char));
-                cmds[cmdslen-1][len] = ch;
-                cmds[cmdslen-1][len + 1] = '\0';
+                PutCurWord(ch);
             }
         break;
         case QUOTE:
