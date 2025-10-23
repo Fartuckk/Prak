@@ -10,11 +10,6 @@ enum {
     REGULAR
 }  state;
 
-/*returns 1 if char is "space-like", otherwise returns 0*/
-int Is_space(char ch) {
-    return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
-}
-
 /*temporary function for debug*/
 void Debug() {
     printf("state = %d\ncmdslen = %d\n", state, cmdslen);
@@ -23,8 +18,24 @@ void Debug() {
     // }
 }
 
+/*returns 1 if char is "space-like", otherwise returns 0*/
+int Is_space(char ch) {
+    return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
+}
+
+void ClearCmds() {
+    for (int i = 0; i < cmdslen; ++i) {
+        free(cmds[i]);
+    }
+    free(cmds);
+    cmds = NULL;
+    cmdslen = 0;
+    state = SPACE;
+}
+
 /*parser by char*/
 void Parser(char ch) {
+    int len;
     switch (state) {
         case SPACE:
             if ( Is_space(ch) ) {
@@ -44,9 +55,10 @@ void Parser(char ch) {
                 state = SPACE;
             }
             else if ( (1) ) {
-                cmds[cmdslen-1] = realloc(cmds[cmdslen-1], (strlen(cmds[cmdslen-1]) + 2)*sizeof(char));
-                cmds[cmdslen-1][strlen(cmds[cmdslen-1])] = ch;
-                cmds[cmdslen-1][strlen(cmds[cmdslen-1]) + 1] = '\0';
+                len = strlen(cmds[cmdslen-1]);
+                cmds[cmdslen-1] = realloc(cmds[cmdslen-1], (len + 2)*sizeof(char));
+                cmds[cmdslen-1][len] = ch;
+                cmds[cmdslen-1][len + 1] = '\0';
             }
         break;
     }
@@ -58,6 +70,7 @@ void Execute() {
         printf("Word %d:  %s\n", i, cmds[i]);
     }
     printf("Executed.\n");
+    ClearCmds();
 }
 
 int main() {
