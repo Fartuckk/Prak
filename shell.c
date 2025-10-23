@@ -7,7 +7,8 @@ int cmdslen = 0;
 
 enum {
     SPACE,
-    REGULAR
+    REGULAR,
+    QUOTE
 }  state;
 
 /*temporary function for debug*/
@@ -23,10 +24,12 @@ int Is_space(char ch) {
     return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
 }
 
+/*returns 1 if char is considered "special symbol", otherwise returns 0*/
 int Is_special(char ch) {
     return ( (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ';') || (ch == ':') || (ch == ',') );
 }
 
+/*frees all memory used for CMDS, resets CMDSLEN and STATE*/
 void ClearCmds() {
     for (int i = 0; i < cmdslen; ++i) {
         free(cmds[i]);
@@ -44,6 +47,15 @@ void Parser(char ch) {
         case SPACE:
             if ( Is_space(ch) ) {
                 /*doing nothing*/
+            }
+            else if (Is_special(ch))
+            {
+                ++cmdslen;
+                cmds = realloc(cmds, cmdslen * sizeof(char *));
+                cmds[cmdslen - 1] = malloc(2 * sizeof(char));
+                cmds[cmdslen - 1][0] = ch;
+                cmds[cmdslen - 1][1] = '\0';
+                state = SPACE;
             }
             else if ( (1) ) {
                 ++cmdslen;
@@ -72,6 +84,9 @@ void Parser(char ch) {
                 cmds[cmdslen-1][len] = ch;
                 cmds[cmdslen-1][len + 1] = '\0';
             }
+        break;
+        case QUOTE:
+            
         break;
     }
 }
