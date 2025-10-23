@@ -23,6 +23,10 @@ int Is_space(char ch) {
     return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
 }
 
+int Is_special(char ch) {
+    return ( (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ';') || (ch == ':') || (ch == ',') );
+}
+
 void ClearCmds() {
     for (int i = 0; i < cmdslen; ++i) {
         free(cmds[i]);
@@ -52,6 +56,14 @@ void Parser(char ch) {
         break;
         case REGULAR:
             if ( Is_space(ch) ) {
+                state = SPACE;
+            }
+            else if ( Is_special(ch) ) {
+                ++cmdslen;
+                cmds = realloc(cmds, cmdslen*sizeof(char *));
+                cmds[cmdslen-1] = malloc(2*sizeof(char));
+                cmds[cmdslen-1][0] = ch;
+                cmds[cmdslen-1][1] = '\0';
                 state = SPACE;
             }
             else if ( (1) ) {
