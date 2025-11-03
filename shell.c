@@ -5,9 +5,18 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-char** cmds = NULL;  /*переделать в новую структуру, носить cmdslen с собой*/
-int cmdslen = 0;
-int* prs = NULL;    /*список процессов, запущенных на фоне, хранятся в виде pid'ов*/
+// char** cmds = NULL;  /*переделать в новую структуру, носить cmdslen с собой*/
+// int cmdslen = 0;
+
+typedef struct {
+    char ** cmds;
+    int cmdslen;
+} cmnd;
+
+cmnd* command = NULL;
+int commandcount = 0;
+
+int* prs = NULL;    // список фоновых процессов, хранятся в виде pid'ов
 int prscount = 0;
 
 enum {
@@ -16,67 +25,86 @@ enum {
     QUOTE
 } state = SPACE;
 
-/*temporary function for debug*/
+// temporary function for debug
 void Debug(void) {
-    printf("state = %d\ncmdslen = %d\n", state, cmdslen);
-    // for (int i = 0; i < cmdslen; ++i) {
-    //     printf("Cmd %d:  %s\n", i, cmds[i]);
+    printf("state = %d\ncmdslen = %d\n", state, command[commandcount-1].cmdslen);
+    // for (int i = 0; i < command[commandcount-1].cmdslen; ++i) {
+    //     printf("Cmd %d:  %s\n", i, command[commandcount-1].cmds[i]);
     // }
 }
 
-/*returns 1 if function is ready to execute, otherwise returns 0*/
+// returns 1 if function is ready to execute, otherwise returns 0
 int Is_ready2execute(void) {
     return ( (state != QUOTE) );
 }
 
-/*returns 1 if char is considered "space-like", otherwise returns 0*/
+// returns 1 if char is considered "space-like", otherwise returns 0
 int Is_space(char ch) {
     return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
 }
 
-/*returns 1 if char is considered "special symbol", otherwise returns 0*/
+// returns 1 if char is considered "special symbol", otherwise returns 0
 int Is_special(char ch) {
     return ( (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ';') || (ch == ':') || (ch == ',') );
 }
 
-/*returns 1 if char is "quote", otherwise returns 0*/
+// returns 1 if char is "quote", otherwise returns 0
 int Is_quote(char ch) {
     return (ch == '"');
 }
 
-/*frees all memory used for CMDS, resets CMDSLEN and STATE*/
-void ClearCmds() {
-    for (int i = 0; i < cmdslen; ++i) {
-        free(cmds[i]);
+// returns 1 if char is "semicolon", otherwise returns 0
+int Is_semicolon(char ch) {
+    return (ch == ';');
+}
+
+// frees all memory used for command[k], resets CMDSLEN and STATE
+void ClearCmds(cmnd* command) {
+    for (int i=0; i<command->cmdslen; ++i) {
+        free(command->cmds[i]);
     }
-    free(cmds);
-    cmds = NULL;
-    cmdslen = 0;
+    free(command->cmds);
+    command->cmds = NULL;
+    command->cmdslen = 0;
+}
+
+// clears all command
+void ClearAll(void) {
+    for(int i=0; i<commandcount; i++)
+        ClearCmds(command+i);
+    free(command);
     state = SPACE;
 }
 
 void Put2NewWord(char ch) {
-    ++cmdslen;
-    cmds = realloc(cmds, cmdslen*sizeof(char *));
+    cmnd currcomm = command[commandcount-1];
+    char* lastcmd = currcomm.cmds[currcomm.cmdslen-1];
+    int len = strlen( lastcmd );
+
+    ++currcomm.cmdslen;
+    currcomm.cmds = realloc(currcomm.cmds, currcomm.cmdslen*sizeof(char *));
     if (ch == 0) {                               // начало нового пустого слова
-        cmds[cmdslen-1] = malloc(sizeof(char));
-        cmds[cmdslen-1][0] = '\0';
+        lastcmd = malloc(sizeof(char));
+        lastcmd[0] = '\0';
     }
     else {                                     // начало нового слова из 1 символа
-        cmds[cmdslen-1] = malloc(2*sizeof(char));
-        cmds[cmdslen-1][0] = ch;
-        cmds[cmdslen-1][1] = '\0';
+        lastcmd = malloc(2*sizeof(char));
+        lastcmd[0] = ch;
+        lastcmd[1] = '\0';
     }
 }
 
 void Put2CurWord(char ch) {
-    int len = strlen(cmds[cmdslen-1]);
-    cmds[cmdslen-1] = realloc(cmds[cmdslen-1], (len + 2)*sizeof(char));
-    cmds[cmdslen-1][len] = ch;
-    cmds[cmdslen-1][len + 1] = '\0';
+    cmnd currcomm = command[commandcount-1];
+    char* lastcmd = currcomm.cmds[currcomm.cmdslen-1];
+    int len = strlen( lastcmd );
+
+    lastcmd = realloc(lastcmd, (len + 2)*sizeof(char));
+    lastcmd[len] = ch;
+    lastcmd[len + 1] = '\0';
 }
 
-/*parser by char*/
+// parser by char
 void Parser(char ch) {
     switch (state) {
         case SPACE:
@@ -91,6 +119,11 @@ void Parser(char ch) {
             else if ( Is_quote(ch) ) {
                 Put2NewWord(0);
                 state = QUOTE;
+            }
+            else if ( Is_semicolon(ch) ) {
+                ++commandcount;
+                realloc(command, commandcount*sizeof(cmnd));
+                state = SPACE;
             }
             else { // is regular.
                 Put2NewWord(ch);
@@ -108,6 +141,11 @@ void Parser(char ch) {
             else if ( Is_quote(ch) ) {
                 state = QUOTE;
             }
+            else if ( Is_semicolon(ch) ) {
+                ++commandcount;
+                realloc(command, commandcount*sizeof(cmnd));
+                state = SPACE;
+            }
             else { // is regular.
                 Put2CurWord(ch);
             }
@@ -116,15 +154,21 @@ void Parser(char ch) {
             if ( Is_quote(ch) ) {
                 state = REGULAR;
             }
-            else { // is special, space, '\n', regular
+            else { // is special, space, semicolon, '\n', regular
                 Put2CurWord(ch);
             }
         break;
     }
 }
 
-/*execute parsered cmds*/
+// execute parsered cmds
 void Execute() {
+    
+    
+    
+    
+    
+    
     cmds = realloc(cmds, (cmdslen+1)*sizeof(char *));
     cmds[cmdslen] = NULL;
     char *s;
@@ -144,7 +188,6 @@ void Execute() {
     pid_t pid = fork();
     int status;
     if (pid == 0) {               // SON
-        printf("Executing...\n");
         execvp(cmds[0], cmds);
         // printf("%s\n", strerror(errno));      // analog to perror()
         s = cmds[0];
@@ -152,11 +195,11 @@ void Execute() {
         exit(1);
     }
     else if (pid != -1) {       // FATHER
-        /*добавить проверку на & в конце*/
-        if(waitpid(pid, &status, 0) == -1) {
-            perror("waitpid");
+        if (1) {                                 // добавить проверку на & в конце
+            if(waitpid(pid, &status, 0) == -1) {
+                perror("waitpid");
+            }
         }
-        printf("Executed.\n");
     }
     else {
         perror("FORK FAILED.");
