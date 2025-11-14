@@ -4,9 +4,9 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 
-// char** cmds = NULL;  /*переделать в новую структуру, носить cmdslen с собой*/
-// int cmdslen = 0;
+
 
 typedef struct {
     char ** cmds;
@@ -26,32 +26,64 @@ enum {
 } state = SPACE;
 
 
+// is equivalent to getchar(), but is non-blocking.
+// returns char if read successfully, 0 if nothing was read., -1 if EOF was read.
+int read_nonblock() { /*при необходимости можно заменить на read_nonblock(char *c), для корректизации возвращаемых значений*/
+    unsigned char c;
+    int res;
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+
+    res = read(STDIN_FILENO, &c, sizeof(char));
+    if (res > 0) { // char read.
+        return c;
+    }
+    else if (res == 0) { // EOF read.
+        return EOF;
+    }
+    else { // nothing.
+        return 0;
+    }
+}
+
+
+// returns 1 if "s" is acceptable parameter for "cd" command, otherwise returns 0
+int Check_cd_parameter(const char *s) {
+    return !( strcmp(s, "-L") && strcmp(s, "-P") && strcmp(s, "-e") && strcmp(s, "-LP") && strcmp(s, "-PL") && strcmp(s, "-Le") && strcmp(s, "-eL") && strcmp(s, "-Pe") && strcmp(s, "-eP") && strcmp(s, "-LPe") && strcmp(s, "-LeP") && strcmp(s, "-ePL") && strcmp(s, "-eLP") && strcmp(s, "-PLe") && strcmp(s, "-PeL") );
+}
+
+
 // returns 1 if function is ready to execute, otherwise returns 0
 int Is_ready2execute(void) {
     return ( (state != QUOTE) );
 }
+
 
 // returns 1 if char is considered "space-like", otherwise returns 0
 int Is_space(char ch) {
     return ( ((ch >= 0) && (ch <= 32)) || (ch == 127) );
 }
 
+
 // returns 1 if char is considered "special symbol", otherwise returns 0
 int Is_special(char ch) {
     return ( (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ':') || (ch == ',') );
 }
+
 
 // returns 1 if char is "quote", otherwise returns 0
 int Is_quote(char ch) {
     return (ch == '"');
 }
 
+
 // returns 1 if char is "semicolon", otherwise returns 0
 int Is_semicolon(char ch) {
     return (ch == ';');
 }
 
-// frees all memory used for command_i
+
+// frees all memory used for command_i, to be used in ClearAll() only
 void ClearCmds(cmnd* command_i) {
     for (int i=0; i<command_i->cmdslen; ++i) {
         free(command_i->cmds[i]);
@@ -61,7 +93,8 @@ void ClearCmds(cmnd* command_i) {
     command_i->cmdslen = 0;
 }
 
-// clears all command if mode = 0; also mallocs command if mode = 1
+
+// frees all command if mode = 0; also mallocs command if mode = 1
 void ClearAll(int mode) {
     for(int i=0; i<commandcount; i++) {
         ClearCmds(command+i);
@@ -75,6 +108,8 @@ void ClearAll(int mode) {
     }
 }
 
+
+// creates a new empty word if ch = 0, otherwise creates a new word adding ch to the beginning of it
 void Put2NewWord(char ch) {
     cmnd* currcomm = command+commandcount-1;
     ++currcomm->cmdslen;
@@ -91,6 +126,8 @@ void Put2NewWord(char ch) {
     }
 }
 
+
+// adds ch to the end of last cmd
 void Put2CurWord(char ch) {
     cmnd* currcomm = command+commandcount-1;
     int len = strlen( currcomm->cmds[currcomm->cmdslen-1] );
@@ -99,6 +136,7 @@ void Put2CurWord(char ch) {
     currcomm->cmds[currcomm->cmdslen-1][len] = ch;
     currcomm->cmds[currcomm->cmdslen-1][len + 1] = '\0';
 }
+
 
 // parser by char
 void Parser(char ch) {
@@ -141,7 +179,6 @@ void Parser(char ch) {
             }
             else if ( Is_semicolon(ch) ) {
                 ++commandcount;
-                printf("%d", commandcount);
                 command = realloc(command, commandcount*sizeof(cmnd));
                 (command+commandcount-1)->cmds = NULL;
                 (command+commandcount-1)->cmdslen = 0;
@@ -162,90 +199,149 @@ void Parser(char ch) {
     }
 }
 
+
+// execute command[k], waiting till its completion if mode = 0, executing it at background while adding its pid to the prs* if mode = 1
+void ExecuteSingleCommand(int k, int mode) {
+    int len = command[k].cmdslen;
+    command[k].cmds = realloc(command[k].cmds, (len + 1)*sizeof(char *));
+    command[k].cmds[len] = NULL;
+
+    int dir = 1;
+    if (!strcmp(command[k].cmds[0], "cd")) {     // "cd" command handler
+        while ( (command[k].cmds[dir] != NULL) && (command[k].cmds[dir][0] == '-') ) {  // parameters for "cd" handler
+            if ( Check_cd_parameter(command[k].cmds[dir]) == 0 ) {
+                printf("cd: invalid option\n");fflush(stdout);
+                // ClearAll(1);
+                return;
+            }
+            ++dir;
+        }
+
+        if (chdir(command[k].cmds[dir]) == -1) {
+            if (command[k].cmds[dir] == NULL) {
+                // ClearAll(1);
+                return;
+            }
+            perror("cd failed");
+        }
+        ClearAll(1);
+        return;
+    }
+
+    pid_t pid = fork();
+    int status;
+    char *s;
+    if (pid == 0) {                              // SON
+        execvp(command[k].cmds[0], command[k].cmds);
+        // we are here only if execvp exited with error
+        s = command[k].cmds[0];
+        perror(s);
+        exit(1);
+    }
+    else if (pid != -1) {                        // FATHER
+        // printf("AAAAA\n");fflush(stdout);
+        if (mode) {
+            /* mode = 1 here */
+        }
+        else {
+            if (waitpid(pid, &status, 0) == -1) {
+                perror("waitpid");
+            }
+        }
+    }
+    else {
+        perror("FORK FAILED.");
+    }
+    // ClearAll(1);
+}
+
+
 // execute parsered cmds
-// void Execute() {
-    
-    
-    
-    
-    
-    
-//     cmds = realloc(cmds, (cmdslen+1)*sizeof(char *));
-//     cmds[cmdslen] = NULL;
-//     char *s;
+void Execute() {
+    if (commandcount == 1 && command[0].cmdslen == 0) { // in order not to execute an empty command
+        ClearAll(1);
+        return;
+    }
 
-//     if (!strcmp(cmds[0], "cd")) {                // "cd" command handler
-//         if (chdir(cmds[1]) == -1) {
-//             if (cmds[1] == NULL) {
-//                 ClearAll(1);
-//                 return;
-//             }
-//             perror("cd failed");
-//         }
-//         ClearAll(1);
-//         return;
-//     }
+    int amp_flag = 0;
 
-//     pid_t pid = fork();
-//     int status;
-//     if (pid == 0) {               // SON
-//         execvp(cmds[0], cmds);
-//         // printf("%s\n", strerror(errno));      // analog to perror()
-//         s = cmds[0];
-//         perror(s);
-//         exit(1);
-//     }
-//     else if (pid != -1) {       // FATHER
-//         if (1) {                                 // добавить проверку на & в конце
-//             if(waitpid(pid, &status, 0) == -1) {
-//                 perror("waitpid");
-//             }
-//         }
-//     }
-//     else {
-//         perror("FORK FAILED.");
-//     }
-//     ClearAll(1);
-// }
+    for (int i = 0; i < commandcount; ++i) { // "&" handler
+        for (int j = 0; j < command[i].cmdslen; ++j) {
+            for (int k = 0; k < strlen(command[i].cmds[j]); ++k) {
+                if (command[i].cmds[j][k] == '&') {
+                    if ( ((i+1)== commandcount) && ((j+1)== command[i].cmdslen) && (command[i].cmds[j][k+1] == '\0') ) {
+                        amp_flag = 1;
+                        command[i].cmds[j][k] = '\0';
+                    }
+                    else {
+                        printf("Error: bad positioning of \"&\", or more than one \"&\" in line.\n");fflush(stdout);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    for (int i = 0; i < commandcount; ++i) {
+        if ( ((i+1)== commandcount) && (amp_flag) ) {
+            ExecuteSingleCommand(i,1);
+        }
+        else {
+            ExecuteSingleCommand(i,0);
+        }
+    }
+    ClearAll(1);
+}
+
 
 // temporary function for debug
 void Debug(void) {
     for (int i=0; i<commandcount; ++i) {
-        printf("COMMAND %d:\n", i);
+        printf("COMMAND %d:\n", i);fflush(stdout);
         for (int j=0; j<command[i].cmdslen; ++j) {
-            printf("     cmd[%d]:   %s\n", j, command[i].cmds[j]);
+            printf("     cmd[%d]:   %s\n", j, command[i].cmds[j]);fflush(stdout);
         }
-        printf("\n");
+        printf("\n");fflush(stdout);
     }
     ClearAll(1);
-    // printf("state = %d\ncmdslen = %d\n", state, command[commandcount-1].cmdslen);
+    // printf("state = %d\ncmdslen = %d\n", state, command[commandcount-1].cmdslen);fflush(stdout);
     // for (int i = 0; i < command[commandcount-1].cmdslen; ++i) {
-    //     printf("Cmd %d:  %s\n", i, command[commandcount-1].cmds[i]);
+    //     printf("Cmd %d:  %s\n", i, command[commandcount-1].cmds[i]);fflush(stdout);
     // }
 }
+
+
 
 
 
 int main() {
     char ch;
     char cwd[1024] = "$";
-    getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd); // вывод строки текущей папки
+    getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
 
-    ClearAll(1); // по сути, malloc(command) и обнуление его частей
+    ClearAll(1); // in fact, it's malloc(command) +zeroing its parts
 
     while (1) {
-        ch = getchar(); /*заменить на неблокирующий вариант getchar'а*/
+        // ch = getchar(); /*заменить на неблокирующий вариант getchar'а*/
+        
+        ch = read_nonblock();
+        
         /*здеся будет проверка всех фоновых процессов: for до prscount и waitpid каждому prs[i]*/
+        if (ch == 0) {
+            usleep(10000);  // in order not to overload the CPU while infinite reading "nothing"
+            continue;
+        }
         if (ch == EOF) {
-            printf("\nExit.\n");
+            /*здеся будет ожидание завершения всех фоновых процессов*/
+            printf("\nExit.\n");fflush(stdout);
             return 0;
         }
         if ( (ch == '\n') && (Is_ready2execute()) ) {
-            // Execute();
-            Debug();
+            Execute();
+            // Debug();
 
             state = SPACE;
-            getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd); // вывод строки текущей папки
+
+            getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
         }
         else {
             Parser(ch);
