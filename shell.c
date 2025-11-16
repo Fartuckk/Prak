@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
+#include <signal.h>
 
 
 
@@ -16,7 +17,7 @@ typedef struct {
 cmnd* command = NULL;
 int commandcount = 0;
 
-int* prs = NULL;    // список фоновых процессов, хранятся в виде pid'ов
+int* prs = NULL;    // list of background processes, contains their pids
 int prscount = 0;
 
 enum {
@@ -67,7 +68,7 @@ int Is_space(char ch) {
 
 // returns 1 if char is considered "special symbol", otherwise returns 0
 int Is_special(char ch) {
-    return ( (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ':') || (ch == ',') );
+    return ( (ch == '=') || (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ':') || (ch == ',') );
 }
 
 
@@ -87,6 +88,7 @@ int Is_semicolon(char ch) {
 void ClearCmds(cmnd* command_i) {
     for (int i=0; i<command_i->cmdslen; ++i) {
         free(command_i->cmds[i]);
+        command_i->cmds[i] = NULL;
     }
     free(command_i->cmds);
     command_i->cmds = NULL;
@@ -100,6 +102,7 @@ void ClearAll(int mode) {
         ClearCmds(command+i);
     }
     free(command);
+    command = NULL;
     if (mode) {
         command = malloc(sizeof(cmnd));
         command->cmds = NULL;
@@ -238,10 +241,13 @@ void ExecuteSingleCommand(int k, int mode) {
         perror(s);
         exit(1);
     }
-    else if (pid != -1) {                        // FATHER
+    else if (pid > 0) {                        // FATHER
         // printf("AAAAA\n");fflush(stdout);
         if (mode) {
-            /* mode = 1 here */
+            prs = realloc(prs, (prscount+1)*sizeof(int *));
+            prs[prscount] = pid;
+            ++prscount;
+            printf("[%d] %d\n", prscount, pid);fflush(stdout);
         }
         else {
             if (waitpid(pid, &status, 0) == -1) {
@@ -265,23 +271,23 @@ void Execute() {
 
     int amp_flag = 0;
 
-    for (int i = 0; i < commandcount; ++i) { // "&" handler
-        for (int j = 0; j < command[i].cmdslen; ++j) {
-            for (int k = 0; k < strlen(command[i].cmds[j]); ++k) {
-                if (command[i].cmds[j][k] == '&') {
-                    if ( ((i+1)== commandcount) && ((j+1)== command[i].cmdslen) && (command[i].cmds[j][k+1] == '\0') ) {
-                        amp_flag = 1;
-                        command[i].cmds[j][k] = '\0';
-                    }
-                    else {
-                        printf("Error: bad positioning of \"&\", or more than one \"&\" in line.\n");fflush(stdout);
-                        return;
-                    }
+    for (int i=0; i<commandcount; ++i) { // "&" handler
+        for (int j=0; j<command[i].cmdslen; ++j) {
+            if (command[i].cmds[j][0] == '&') {
+                if ( ((i+1)== commandcount) && ((j+1)== command[i].cmdslen) ) {
+                    amp_flag = 1;
+                    free(command[i].cmds[j]);
+                    command[i].cmds[j] = NULL;
+                    --command[i].cmdslen;
+                }
+                else {
+                    printf("Error: bad positioning of \"&\", or more than one \"&\" in line.\n");fflush(stdout);
+                    return;
                 }
             }
         }
     }
-    for (int i = 0; i < commandcount; ++i) {
+    for (int i=0; i<commandcount; ++i) {
         if ( ((i+1)== commandcount) && (amp_flag) ) {
             ExecuteSingleCommand(i,1);
         }
@@ -314,6 +320,7 @@ void Debug(void) {
 
 
 int main() {
+    int status, working;
     char ch;
     char cwd[1024] = "$";
     getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
@@ -325,13 +332,11 @@ int main() {
         
         ch = read_nonblock();
         
-        /*здеся будет проверка всех фоновых процессов: for до prscount и waitpid каждому prs[i]*/
         if (ch == 0) {
             usleep(10000);  // in order not to overload the CPU while infinite reading "nothing"
             continue;
         }
         if (ch == EOF) {
-            /*здеся будет ожидание завершения всех фоновых процессов*/
             printf("\nExit.\n");fflush(stdout);
             return 0;
         }
@@ -341,6 +346,22 @@ int main() {
 
             state = SPACE;
 
+            /*здеся будет проверка всех фоновых процессов: for до prscount и waitpid каждому prs[i]*/
+            working = 0;
+            for (int i=0; i<prscount; ++i) {
+                if ( (prs[i]) && (waitpid(prs[i], &status, WNOHANG) == prs[i]) ) {
+                    printf("[%d] (%d) done with exit code: %d\n", i+1, prs[i], WEXITSTATUS(status));
+                    prs[i] = 0;
+                }
+                else if (prs[i]) {
+                    working = 1;
+                }
+            }
+            if (!working) {
+                free(prs);
+                prs = NULL;
+                prscount = 0;
+            }
             getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
         }
         else {
