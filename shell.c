@@ -9,16 +9,28 @@
 
 
 
-int group_flag = 0;
+int group_flag = 0,
+    pipe_flag = 0,
+    amp_flag = 0,
+    stat = -1,
+    global_stat = -1;
 
+
+
+typedef union {
+    int pipes[2];
+    struct {
+        int read;
+        int write;
+    };
+} pipe2;
+
+pipe2 *pipe_lst = NULL;
 
 typedef struct {
     char** cmds;
     int cmdslen;
 } cmnd;
-
-// cmnd* command = NULL;
-// int commandcount = 0;
 
 typedef struct {
     cmnd* command;
@@ -30,14 +42,21 @@ int grpcount = 0;
 
 
 
-int* prs = NULL;    // list of background processes, contains their pids
-int prscount = 0;
+typedef struct {
+    int* prs;           // list of background processes, contains their pids
+    int prscount;
+} prs_lst;
+
+prs_lst prs_list[2] = {{.prs = NULL, .prscount = 0},{.prs = NULL, .prscount = 0}};
+
+
 
 enum {
     SPACE,
     REGULAR,
     QUOTE,
-    PIPE
+    PIPE,
+    AMP
 } state = SPACE;
 
 
@@ -96,6 +115,11 @@ void ClearAll(int mode) {
 
 
 
+// restore blocking mode for stdin
+void restore_blocking(void) {
+    int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
+    fcntl(STDIN_FILENO, F_SETFL, flags & ~O_NONBLOCK);
+}
 
 // is equivalent to getchar(), but is non-blocking.
 // returns char if read successfully, 0 if nothing was read., -1 if EOF was read.
@@ -106,6 +130,8 @@ int read_nonblock() { /*при необходимости можно замен�
     fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
 
     res = read(STDIN_FILENO, &c, sizeof(char));
+
+    restore_blocking();
     if (res > 0) { // char read.
         return c;
     }
@@ -114,6 +140,29 @@ int read_nonblock() { /*при необходимости можно замен�
     }
     else { // nothing.
         return 0;
+    }
+}
+
+// close all descriptors but for rd_fd for read and wrt_fd for write (in group[k])
+void CloseAll(int rd_fd, int wrt_fd, int k) {
+    // printf("%d\n", grp[k].commandcount-1);
+    for (int n=0; n<grp[k].commandcount-1; ++n) {
+        // printf("n: %d, rd: %d, wrt: %d\n", n, rd_fd, wrt_fd);fflush(stdout);
+        // printf("%p, %d\n", &pipe_lst[n], rd_fd);fflush(stdout);
+        if (pipe_lst[n].read != rd_fd) {
+            close(pipe_lst[n].read);
+            // printf("closed read: %d\n", pipe_lst[n].read);fflush(stdout);
+        }
+        else {
+            // printf("kept read: %d\n", pipe_lst[n].read);fflush(stdout);
+        }
+        if (pipe_lst[n].write != wrt_fd) {
+            close(pipe_lst[n].write);
+            // printf("closed write: %d\n", pipe_lst[n].write);fflush(stdout);
+        }
+        else {
+            // printf("kept write: %d\n", pipe_lst[n].write);fflush(stdout);
+        }
     }
 }
 
@@ -137,7 +186,7 @@ int Is_space(char ch) {
 
 // returns 1 if char is considered "special symbol", otherwise returns 0
 int Is_special(char ch) {
-    return ( (ch == '=') || (ch == '>') || (ch == '<') || (ch == '!') || (ch == '&') || (ch == '$') || (ch == '^') || (ch == ':') || (ch == ',') );
+    return ( (ch == '=') || (ch == '>') || (ch == '<') || (ch == '!') || (ch == '$') || (ch == '^') || (ch == ':') || (ch == ',') );
 }
 
 // returns 1 if char is "quote", otherwise returns 0
@@ -153,6 +202,11 @@ int Is_semicolon(char ch) {
 // returns 1 if char is "pipe", otherwise returns 0
 int Is_pipe(char ch) {
     return (ch == '|');
+}
+
+// returns 1 if char is "pipe", otherwise returns 0
+int Is_amp(char ch) {
+    return (ch == '&');
 }
 
 
@@ -211,11 +265,16 @@ void Parser(char ch) {
             else if ( Is_pipe(ch) ) {
                 state = PIPE;
             }
+            else if ( Is_amp(ch) ) {
+                Put2NewWord(ch);
+                state = AMP;
+            }
             else { // is regular.
                 Put2NewWord(ch);
                 state = REGULAR;
             }
         break;
+
         case REGULAR:
             if ( Is_space(ch) ) {
                 state = SPACE;
@@ -234,10 +293,93 @@ void Parser(char ch) {
             else if ( Is_pipe(ch) ) {
                 state = PIPE;
             }
+            else if ( Is_amp(ch) ) {
+                Put2NewWord(ch);
+                state = AMP;
+            }
             else { // is regular.
                 Put2CurWord(ch);
             }
         break;
+
+        case PIPE:
+            if ( Is_space(ch) ) {
+                pipe_flag = 1;
+            }
+            else if ( Is_special(ch) ) {
+                printf("Parse error.\n");fflush(stdout);
+                exit(1);
+            }
+            else if ( Is_quote(ch) ) {
+                pipe_flag = 0;
+                CreateNewCommand();
+                Put2NewWord(ch);
+                state = QUOTE;
+            }
+            else if ( Is_semicolon(ch) ) {
+                printf("Parse error.\n");fflush(stdout);
+                exit(1);
+            }
+            else if ( Is_pipe(ch) ) {
+                if (pipe_flag) {
+                    printf("Parse error.\n");fflush(stdout);
+                    exit(1);
+                }
+                else {
+                    // printf("Parse error.\n");fflush(stdout);
+                    // exit(1);
+                    CreateNewGroup();
+                    Put2NewWord('|');
+                    Put2CurWord('|');
+                    CreateNewGroup();
+                    state = SPACE;
+                    /* "||" logical operator */
+                }
+            }
+            else if ( Is_amp(ch) ) {
+                printf("Parse error.\n");fflush(stdout);
+                exit(1);
+            }
+            else { // is regular
+                pipe_flag = 0;
+                CreateNewCommand();
+                Put2NewWord(ch);
+                state = REGULAR;
+            }
+        break;
+
+        case AMP:
+            if ( Is_space(ch) ) {
+                amp_flag = 1;
+            }
+            else if ( Is_amp(ch) ) {
+                if (amp_flag) {
+                    printf("Parse error.\n");fflush(stdout);
+                    exit(1);
+                }
+                else {
+                    // printf("Parse error.\n");fflush(stdout);
+                    // exit(1);
+                    int k = grpcount-1,
+                        m = grp[k].commandcount-1,
+                        n = grp[k].command[m].cmdslen-1;
+                    free(grp[k].command[m].cmds[n]);
+                    grp[k].command[m].cmds[n] = NULL;
+                    --grp[k].command[m].cmdslen;
+                    CreateNewGroup();
+                    Put2NewWord('&');
+                    Put2CurWord('&');
+                    CreateNewGroup();
+                    state = SPACE;
+                    /* "&&" logical operator: need to replace '&' in last word with '\0' */
+                }
+            }
+            else { // is regular
+                printf("Parse error.\n");fflush(stdout);
+                exit(1);
+            }
+        break;
+
         case QUOTE:
             if ( Is_quote(ch) ) {
                 state = REGULAR;
@@ -246,133 +388,182 @@ void Parser(char ch) {
                 Put2CurWord(ch);
             }
         break;
-        case PIPE:
-            if ( Is_space(ch) ) {
-                // doing nothing
-            }
-            else if ( Is_special(ch) ) {
-                CreateNewCommand();
-                Put2NewWord(ch);
-                state = SPACE;
-            }
-            else if ( Is_quote(ch) ) {
-                CreateNewCommand();
-                Put2NewWord(ch);
-                state = QUOTE;
-            }
-            else if ( Is_semicolon(ch) ) {
-                CreateNewGroup();
-                state = SPACE;
-            }
-            else if ( Is_pipe(ch) ) {  // "||" logical operator, or error
-                fflush(NULL);
-                ClearAll(0);
-                exit(1);
-            }
-            else { // is regular
-                CreateNewCommand();
-                Put2NewWord(ch);
-                state = REGULAR;
-            }
-        break;
     }
 }
 
 
-// execute command[k], waiting till its completion if mode = 0, executing it at background while adding its pid to the prs* if mode = 1
-// void ExecuteSingleCommand(int k, int mode) {
-//     int len = command[k].cmdslen;
-//     command[k].cmds = realloc(command[k].cmds, (len + 1)*sizeof(char *));
-//     command[k].cmds[len] = NULL;
-
-//     int dir = 1;
-//     if (!strcmp(command[k].cmds[0], "cd")) {     // "cd" command handler
-//         while ( (command[k].cmds[dir] != NULL) && (command[k].cmds[dir][0] == '-') ) {  // parameters for "cd" handler
-//             if ( Check_cd_parameter(command[k].cmds[dir]) == 0 ) {
-//                 printf("cd: invalid option\n");fflush(stdout);
-//                 // ClearAll(1);
-//                 return;
-//             }
-//             ++dir;
-//         }
-
-//         if (chdir(command[k].cmds[dir]) == -1) {
-//             if (command[k].cmds[dir] == NULL) {
-//                 // ClearAll(1);
-//                 return;
-//             }
-//             perror("cd failed");
-//         }
-//         ClearAll(1);
-//         return;
-//     }
-
-//     pid_t pid = fork();
-//     int status;
-//     char *s;
-//     if (pid == 0) {                              // SON
-//         execvp(command[k].cmds[0], command[k].cmds);
-//         // we are here only if execvp exited with error
-//         s = command[k].cmds[0];
-//         perror(s);
-//         exit(1);
-//     }
-//     else if (pid > 0) {                        // FATHER
-//         // printf("AAAAA\n");fflush(stdout);
-//         if (mode) {
-//             prs = realloc(prs, (prscount+1)*sizeof(int *));
-//             prs[prscount] = pid;
-//             ++prscount;
-//             printf("[%d] %d\n", prscount, pid);fflush(stdout);
-//         }
-//         else {
-//             if (waitpid(pid, &status, 0) == -1) {
-//                 perror("waitpid");
-//             }
-//         }
-//     }
-//     else {
-//         perror("FORK FAILED.");
-//     }
-// }
 
 
-// // execute parsered cmds
-// void Execute() {
-//     if (commandcount == 1 && command[0].cmdslen == 0) { // in order not to execute an empty command
-//         ClearAll(1);
-//         return;
-//     }
+// execute command[l] from group[k], waiting till its completion if bckgrnd_mode = 0, executing it at background while adding its pid to the prs* if bckgrnd_mode = 1
+int ExecuteSingleCommand(int k, int l, int bckgrnd_mode, int read_fd, int write_fd, int prs_list_number) {
+    int len = grp[k].command[l].cmdslen;
+    grp[k].command[l].cmds = realloc(grp[k].command[l].cmds, (len + 1)*sizeof(char *));
+    grp[k].command[l].cmds[len] = NULL;
 
-//     int amp_flag = 0;
+    int cur = 1;
+    if (!strcmp(grp[k].command[l].cmds[0], "cd")) {     // "cd" command handler
+        while ( (grp[k].command[l].cmds[cur] != NULL) && (grp[k].command[l].cmds[cur][0] == '-') ) {  // parameters for "cd" handler
+            if ( Check_cd_parameter(grp[k].command[l].cmds[cur]) == 0 ) {
+                printf("cd: invalid option\n");fflush(stdout);
+                stat = 1;
+                return 0;
+            }
+            ++cur;
+        }
 
-//     for (int i=0; i<commandcount; ++i) { // "&" handler
-//         for (int j=0; j<command[i].cmdslen; ++j) {
-//             if (command[i].cmds[j][0] == '&') {
-//                 if ( ((i+1)== commandcount) && ((j+1)== command[i].cmdslen) ) {
-//                     amp_flag = 1;
-//                     free(command[i].cmds[j]);
-//                     command[i].cmds[j] = NULL;
-//                     --command[i].cmdslen;
-//                 }
-//                 else {
-//                     printf("Error: bad positioning of \"&\", or more than one \"&\" in line.\n");fflush(stdout);
-//                     return;
-//                 }
-//             }
-//         }
-//     }
-//     for (int i=0; i<commandcount; ++i) {
-//         if ( ((i+1)== commandcount) && (amp_flag) ) {
-//             ExecuteSingleCommand(i,1);
-//         }
-//         else {
-//             ExecuteSingleCommand(i,0);
-//         }
-//     }
-//     ClearAll(1);
-// }
+        if (chdir(grp[k].command[l].cmds[cur]) == -1) {
+            if (grp[k].command[l].cmds[cur] == NULL) {
+                return 0;
+            }
+            perror("cd failed");
+            stat = 1;
+        }
+        return 0;
+    }
 
+    pid_t pid = fork();
+    int status;
+    char *s;
+    if (pid == 0) {                              // SON
+        // printf("command: %s,     read_fd/write_fd:    %d / %d\n", grp[k].command[l].cmds[0], read_fd, write_fd);
+        CloseAll(read_fd, write_fd, k);
+        if (read_fd != STDIN_FILENO) {
+            dup2(read_fd, STDIN_FILENO);
+            // close(read_fd);
+        }
+        if (write_fd != STDOUT_FILENO) {
+            dup2(write_fd, STDOUT_FILENO);
+            // close(write_fd);
+        }
+        execvp(grp[k].command[l].cmds[0], grp[k].command[l].cmds);
+        // we are here only if execvp exited with error
+        s = grp[k].command[l].cmds[0];
+        perror(s);
+        exit(1);
+    }
+    else if (pid > 0) {                        // FATHER
+        if (bckgrnd_mode) {
+            prs_list[prs_list_number].prs = realloc(prs_list[prs_list_number].prs, (prs_list[prs_list_number].prscount+1)*sizeof(int *));
+            prs_list[prs_list_number].prs[prs_list[prs_list_number].prscount] = pid;
+            ++prs_list[prs_list_number].prscount;
+            // if (write_fd == STDOUT_FILENO) {
+            //     printf("[%d] %d\n", prs_list[prs_list_number].prscount, pid);fflush(stdout);
+            // }
+            return pid;
+        }
+        else {
+            if (waitpid(pid, &status, 0) == -1) {
+                perror("waitpid");
+            }
+            stat = !!WEXITSTATUS(status);
+        }
+    }
+    else {
+        perror("FORK FAILED.");
+    }
+}
+
+// execute group[k]
+void ExecuteGroup(int k) {
+    if ((grp[k].commandcount == 1) && (grp[k].command[0].cmdslen == 0)) {
+        global_stat = 0;
+        return;
+    }
+
+    int background_flag = 0,
+        m = grp[k].commandcount-1,
+        n = grp[k].command[m].cmdslen-1;
+
+    if (grp[k].command[m].cmds[n][0] == '&') {
+        background_flag = 1;
+        free(grp[k].command[m].cmds[n]);
+        grp[k].command[m].cmds[n] = NULL;
+        --grp[k].command[m].cmdslen;
+    }
+    
+    pipe_lst = malloc(sizeof(pipe2)*(grp[k].commandcount-1));
+
+    for (int i=0; i<grp[k].commandcount-1; ++i) {
+        pipe(pipe_lst[i].pipes);
+    }
+    if (grp[k].commandcount == 1) {
+        if (background_flag) {
+            int pid = ExecuteSingleCommand(k, 0, background_flag, STDIN_FILENO, STDOUT_FILENO, 0);
+            printf("[%d] %d\n", prs_list[0].prscount, pid);fflush(stdout);
+        }
+        else {
+            ExecuteSingleCommand(k, 0, background_flag, STDIN_FILENO, STDOUT_FILENO, 0);
+            global_stat = stat;
+            // printf("**%d\n", global_stat);
+        }
+    }
+    else {
+        if (background_flag) {
+            int pid = ExecuteSingleCommand(k, grp[k].commandcount-1, 1, pipe_lst[grp[k].commandcount-2].read, STDOUT_FILENO, 0);
+            for (int i=grp[k].commandcount-2; i>0; --i) {
+                ExecuteSingleCommand(k, i, 1, pipe_lst[i-1].read, pipe_lst[i].write, 0);
+            }
+            ExecuteSingleCommand(k, 0, 1, STDIN_FILENO, pipe_lst[0].write, 0);
+            CloseAll(-1,-1,k);
+            printf("[1] %d\n", pid);fflush(stdout);
+        }
+        else {
+            ExecuteSingleCommand(k, grp[k].commandcount-1, 1, pipe_lst[grp[k].commandcount-2].read, STDOUT_FILENO, 1);
+            global_stat = stat;
+            for (int i=grp[k].commandcount-2; i>0; --i) {
+                ExecuteSingleCommand(k, i, 1, pipe_lst[i-1].read, pipe_lst[i].write, 1);
+            }
+            ExecuteSingleCommand(k, 0, 1, STDIN_FILENO, pipe_lst[0].write, 1);
+            // sleep(1);
+            CloseAll(-1,-1,k);
+
+            if (prs_list[1].prscount > 0) {
+                int status;
+                waitpid(prs_list[1].prs[0], &status, 0);
+                global_stat = !!WEXITSTATUS(status);
+            }
+            for (int j=1; j<prs_list[1].prscount; ++j) {
+                // printf("%d ***** %d\n", j, prs_list[1].prs[j]);
+                waitpid(prs_list[1].prs[j], NULL, 0);
+            }
+
+            if (prs_list[1].prs) {
+                free(prs_list[1].prs);
+                prs_list[1].prs = NULL;
+                prs_list[1].prscount = 0;
+            }
+        }
+    }
+    // for (int i=0; i<grp[k].commandcount-1; ++i) {
+    //     printf("pipe[%d]   read:  %d\n", i, pipe_lst[i].read);
+    //     printf("pipe[%d]  write:  %d\n", i, pipe_lst[i].write);
+    // }
+}
+
+// execute all groups
+void Execute() {
+    int s;
+    for (int i=0; i<grpcount; ++i) {
+        if ((grp[i].commandcount == 1) && (grp[i].command[0].cmdslen == 1) && (!strcmp(grp[i].command[0].cmds[0], "&&"))) {
+            // printf("%d\n", global_stat);
+            if (global_stat == 1) {
+                ClearAll(1);
+                return;
+            }
+            continue;
+        }
+        if ((grp[i].commandcount == 1) && (grp[i].command[0].cmdslen == 1) && (!strcmp(grp[i].command[0].cmds[0], "||"))) {
+            // printf("%d\n", global_stat);fflush(stdout);
+            if (global_stat == 0) {
+                ClearAll(1);
+                return;
+            }
+            continue;
+        }
+        ExecuteGroup(i);
+    }
+    ClearAll(1);
+}
 
 // temporary function for debug
 void Debug(void) {
@@ -397,19 +588,18 @@ void Debug(void) {
 
 
 
+
 int main() {
     int status, working;
     char ch;
     char cwd[1024] = "$";
-    getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
+    getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // prompt output
 
     ClearAll(1); // in fact, it's malloc(command) +zeroing its parts
 
     while (1) {
-        // ch = getchar(); /*заменить на неблокирующий вариант getchar'а*/
-        
         ch = read_nonblock();
-        
+
         if (ch == 0) {
             usleep(10000);  // in order not to overload the CPU while infinite reading "nothing"
             continue;
@@ -420,28 +610,28 @@ int main() {
             return 0;
         }
         if ( (ch == '\n') && (Is_ready2execute()) ) {
-            // Execute();
-            Debug();
+            Execute();
+            // Debug();
 
             state = SPACE;
 
-            /*здеся будет проверка всех фоновых процессов: for до prscount и waitpid каждому prs[i]*/
+            /* here is the check of all background processes: for till prscount and waitpid each prs[i] */
             working = 0;
-            for (int i=0; i<prscount; ++i) {
-                if ( (prs[i]) && (waitpid(prs[i], &status, WNOHANG) == prs[i]) ) {
-                    printf("[%d] (%d) done with exit code: %d\n", i+1, prs[i], WEXITSTATUS(status));
-                    prs[i] = 0;
+            for (int i=0; i<prs_list[0].prscount; ++i) {
+                if ( (prs_list[0].prs[i]) && (waitpid(prs_list[0].prs[i], &status, WNOHANG) == prs_list[0].prs[i]) ) {
+                    printf("[%d] (%d) done with exit code: %d\n", i+1, prs_list[0].prs[i], WEXITSTATUS(status));
+                    prs_list[0].prs[i] = 0;
                 }
-                else if (prs[i]) {
+                else if (prs_list[0].prs[i]) {
                     working = 1;
                 }
             }
             if (!working) {
-                free(prs);
-                prs = NULL;
-                prscount = 0;
+                free(prs_list[0].prs);
+                prs_list[0].prs = NULL;
+                prs_list[0].prscount = 0;
             }
-            getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // вывод строки текущей папки
+            getcwd(cwd, sizeof(cwd)); printf("%s$ ", cwd);fflush(stdout); // prompt output
         }
         else {
             Parser(ch);
