@@ -30,9 +30,9 @@ pipe2 *pipe_lst = NULL;
 
 typedef enum {
     COMMAND = 0,
-    READ_FILE = 1,
-    WRITE_FILE = 2,
-    APPEND_FILE = 3
+    WRITE_FILE = 1,
+    APPEND_FILE = 2,
+    READ_FILE = 3
 } cmd_type;
 
 typedef struct {
@@ -421,7 +421,7 @@ void Parser(char ch) {
                     /* "&&" logical operator: need to replace '&' in last word with '\0' */
                 }
             }
-            else { // is regular
+            else {
                 printf("Parse error.\n");fflush(stdout);
                 exit(1);
             }
@@ -447,6 +447,7 @@ void Parser(char ch) {
 
         case REDIR_OUT:
             if ( Is_space(ch) ) {
+                // doing nothing
             }
             else if ( ch == '>' ) {
                 redir_type = 2;
@@ -732,7 +733,7 @@ void Debug(void) {
 
 
 
-int main() {
+int main(int argc, char* argv[]) {
     int status, working;
     char ch;
     char cwd[1024] = "$";
@@ -753,8 +754,12 @@ int main() {
             return 0;
         }
         if ( (ch == '\n') && (Is_ready2execute()) ) {
-            Execute();
-            // Debug();
+            if ( argc > 1 && !(strcmp(argv[1], "Debug")) ) {
+                Debug();
+            }
+            else {
+                Execute();
+            }
 
             state = SPACE;
             redir_type = 0;
